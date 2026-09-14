@@ -1,0 +1,199 @@
+@import "../../shared/theme.css";
+
+input[type="file"] {
+	color: var(--ink);
+	font-family: inherit;
+	font-size: 14px;
+}
+
+.roster-input-actions {
+	display: flex;
+	gap: 8px;
+}
+
+/* ---------- Full-screen teleprompter view ---------- */
+/* Fixed white-on-black palette, independent of the site's light/dark
+   theme — classic teleprompter convention for on-set legibility, not a
+   themed surface. */
+
+.teleprompter {
+	position: fixed;
+	inset: 0;
+	background: #000;
+	color: #fff;
+	display: flex;
+	flex-direction: column;
+}
+
+.teleprompter-scroll {
+	flex: 1;
+	overflow-y: auto;
+	scroll-behavior: auto;
+}
+
+.teleprompter-text {
+	max-width: 34ch;
+	margin: 0 auto;
+	padding: 30vh 1.5rem 60vh;
+	font-family:
+		"Segoe UI", "Helvetica Neue", Helvetica, Arial,
+		sans-serif;
+	font-weight: 600;
+	line-height: 1.7;
+	text-align: center;
+}
+
+.teleprompter-text p {
+	margin: 0 0 1.4em;
+}
+
+.teleprompter-text {
+	cursor: text;
+}
+
+.teleprompter-text:focus {
+	outline: 2px dashed rgba(255, 255, 255, 0.3);
+	outline-offset: 8px;
+}
+
+.teleprompter-controls {
+	position: sticky;
+	bottom: 0;
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: 10px;
+	padding: 12px 16px;
+	background: rgba(20, 20, 20, 0.92);
+	border-top: 1px solid rgba(255, 255, 255, 0.14);
+}
+
+.teleprompter-controls button {
+	background: rgba(255, 255, 255, 0.1);
+	border-color: rgba(255, 255, 255, 0.25);
+	color: #fff;
+}
+
+.teleprompter-controls button.primary {
+	background: var(--accent);
+	border-color: var(--accent);
+	color: var(--accent-ink);
+}
+
+.teleprompter-controls button.ghost {
+	background: transparent;
+}
+
+.teleprompter-slider,
+.teleprompter-select {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	font-size: 13px;
+	color: rgba(255, 255, 255, 0.85);
+}
+
+.teleprompter-format-group {
+	display: flex;
+	align-items: center;
+	gap: 6px;
+	font-size: 13px;
+	color: rgba(255, 255, 255, 0.85);
+	padding: 4px 8px;
+	border: 1px solid rgba(255, 255, 255, 0.14);
+	border-radius: 8px;
+}
+
+.teleprompter-format-label {
+	margin-right: 2px;
+}
+
+.teleprompter-format-group .swatch {
+	width: 22px;
+	height: 22px;
+	padding: 0;
+	border: 1px solid rgba(255, 255, 255, 0.4);
+	border-radius: 50%;
+}
+
+.teleprompter-format-group input[type="color"] {
+	width: 26px;
+	height: 26px;
+	padding: 0;
+	border: 1px solid rgba(255, 255, 255, 0.25);
+	border-radius: 6px;
+	background: transparent;
+}
+
+.teleprompter-select select {
+	background: rgba(255, 255, 255, 0.1);
+	border: 1px solid rgba(255, 255, 255, 0.25);
+	border-radius: 6px;
+	color: #fff;
+	padding: 4px 6px;
+	font-family: inherit;
+	font-size: 13px;
+}
+
+.teleprompter-bookmarks {
+	display: flex;
+	align-items: center;
+	gap: 6px;
+}
+
+.bookmark-chip {
+	display: inline-flex;
+	align-items: center;
+	border: 1px solid rgba(255, 255, 255, 0.25);
+	border-radius: 6px;
+	overflow: hidden;
+}
+
+.bookmark-chip button {
+	border: none;
+	border-radius: 0;
+	background: rgba(255, 255, 255, 0.1);
+	color: #fff;
+	padding: 4px 8px;
+	font-size: 13px;
+}
+
+.bookmark-chip .bookmark-remove {
+	background: transparent;
+	padding: 4px 6px;
+	color: rgba(255, 255, 255, 0.7);
+}
+
+.bookmark-chip .bookmark-remove:hover {
+	color: #fff;
+}
+
+.teleprompter-print {
+	display: none;
+}
+
+@media print {
+	.teleprompter-scroll,
+	.teleprompter-controls {
+		display: none;
+	}
+
+	.teleprompter {
+		position: static;
+		background: #fff;
+		color: #000;
+	}
+
+	.teleprompter-print {
+		display: block;
+		max-width: 34ch;
+		margin: 0 auto;
+		font-family: Helvetica, Arial, sans-serif;
+		font-weight: 600;
+		line-height: 1.7;
+	}
+
+	.teleprompter-print p {
+		margin: 0 0 1.4em;
+	}
+}

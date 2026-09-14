@@ -1,0 +1,12 @@
+@import "../../shared/theme.css";
+
+.card-kind {
+	align-self: flex-start;
+	font-size: 0.68rem;
+	letter-spacing: 0.08em;
+	text-transform: uppercase;
+	color: var(--accent);
+	background: var(--accent-soft);
+	padding: 3px 8px;
+	border-radius: 5px;
+}

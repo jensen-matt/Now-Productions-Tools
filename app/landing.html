@@ -1,0 +1,387 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>NowProductions Tools</title>
+<style>
+  :root {
+    --paper: #f1f5f7;
+    --ink: #032d42;
+    --surface: #ffffff;
+    --surface-2: #e9eff2;
+    --line: #d7dfe4;
+    --muted: #56707d;
+    --accent: #63df4e;
+    --accent-ink: #032d42;
+    --accent-soft: #e2f8dc;
+    --blue: #52b8ff;
+    --violet: #7661ff;
+    --magenta: #bf71f2;
+    --hero-a: #03141e;
+    --hero-b: #0a3b52;
+    --hero-ink: #f2f8fb;
+    --hero-line: rgba(242, 248, 251, 0.14);
+    --shadow: rgba(3, 20, 30, 0.14);
+  }
+
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --paper: #051620;
+      --ink: #e8f1f5;
+      --surface: #0d2531;
+      --surface-2: #11303e;
+      --line: #1f4353;
+      --muted: #8fabb8;
+      --accent: #63df4e;
+      --accent-ink: #04150a;
+      --accent-soft: #163a1e;
+      --hero-a: #020c13;
+      --hero-b: #071f2c;
+      --hero-ink: #eef6f4;
+      --hero-line: rgba(238, 246, 244, 0.12);
+      --shadow: rgba(0, 0, 0, 0.5);
+    }
+  }
+
+  :root[data-theme="dark"] {
+    --paper: #051620;
+    --ink: #e8f1f5;
+    --surface: #0d2531;
+    --surface-2: #11303e;
+    --line: #1f4353;
+    --muted: #8fabb8;
+    --accent: #63df4e;
+    --accent-ink: #04150a;
+    --accent-soft: #163a1e;
+    --hero-a: #020c13;
+    --hero-b: #071f2c;
+    --hero-ink: #eef6f4;
+    --hero-line: rgba(238, 246, 244, 0.12);
+    --shadow: rgba(0, 0, 0, 0.5);
+  }
+
+  * { box-sizing: border-box; }
+
+  html, body {
+    margin: 0;
+    background: var(--paper);
+    color: var(--ink);
+    font-family: "Segoe UI", "Helvetica Neue", Helvetica, Arial, sans-serif;
+    line-height: 1.5;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  .display {
+    font-family: "Avenir Next", "Century Gothic", "Segoe UI Semibold", "Helvetica Neue", sans-serif;
+    font-weight: 700;
+    letter-spacing: -0.01em;
+    text-wrap: balance;
+  }
+
+  .mono {
+    font-family: ui-monospace, "SF Mono", "Cascadia Code", Menlo, Consolas, monospace;
+  }
+
+  a { color: inherit; }
+
+  /* ---------- Hero ---------- */
+
+  .hero {
+    position: relative;
+    overflow: hidden;
+    background: linear-gradient(160deg, var(--hero-a), var(--hero-b) 70%);
+    color: var(--hero-ink);
+    padding: 2rem 1.75rem 4.5rem;
+    border-bottom: 1px solid var(--hero-line);
+  }
+
+  .hero::before {
+    content: "";
+    position: absolute;
+    inset: -20% -10% auto auto;
+    width: 60vw;
+    height: 60vw;
+    max-width: 620px;
+    max-height: 620px;
+    background: radial-gradient(closest-side,
+      color-mix(in srgb, var(--blue) 32%, transparent) 0%,
+      color-mix(in srgb, var(--violet) 22%, transparent) 42%,
+      color-mix(in srgb, var(--magenta) 16%, transparent) 68%,
+      transparent 100%);
+    filter: blur(10px);
+    opacity: 0.6;
+    animation: drift 22s ease-in-out infinite alternate;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .hero::before { animation: none; }
+  }
+
+  @keyframes drift {
+    from { transform: translate(0, 0) scale(1); }
+    to   { transform: translate(-6%, 6%) scale(1.08); }
+  }
+
+  .brand-mark {
+    position: relative;
+    z-index: 1;
+    display: inline-flex;
+    align-items: center;
+    gap: 0.5rem;
+  }
+
+  .brand-mark .glyph {
+    width: 9px;
+    height: 9px;
+    border-radius: 2px;
+    background: var(--accent);
+    flex: none;
+  }
+
+  .brand-mark .word {
+    font-family: "Segoe UI Semibold", "Helvetica Neue", Arial, sans-serif;
+    font-weight: 600;
+    font-size: 0.95rem;
+    letter-spacing: 0.01em;
+    color: var(--hero-ink);
+  }
+
+  .hero-body {
+    position: relative;
+    z-index: 1;
+    max-width: 880px;
+    margin: 3.25rem auto 0;
+    text-align: center;
+  }
+
+  .eyebrow {
+    display: inline-block;
+    font-size: 0.72rem;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: color-mix(in srgb, var(--hero-ink) 65%, transparent);
+    margin: 0 0 0.9rem;
+  }
+
+  .hero-title {
+    font-size: clamp(2.1rem, 6vw, 3.4rem);
+    margin: 0 0 0.85rem;
+  }
+
+  .hero-sub {
+    font-size: 1.05rem;
+    color: color-mix(in srgb, var(--hero-ink) 78%, transparent);
+    max-width: 46ch;
+    margin: 0 auto;
+  }
+
+  .hero-bar {
+    width: 56px;
+    height: 4px;
+    margin: 1.5rem auto 0;
+    border-radius: 4px;
+    background: linear-gradient(90deg, var(--blue), var(--violet), var(--magenta));
+  }
+
+  /* ---------- Tools section ---------- */
+
+  .tools {
+    max-width: 1040px;
+    margin: 0 auto;
+    padding: 3rem 1.75rem 5rem;
+  }
+
+  .tools-head {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 1rem;
+    margin-bottom: 1.5rem;
+    border-bottom: 1px solid var(--line);
+    padding-bottom: 0.9rem;
+  }
+
+  .tools-head h2 {
+    font-size: 0.78rem;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--muted);
+    margin: 0;
+  }
+
+  .tools-count {
+    font-size: 0.78rem;
+    color: var(--muted);
+  }
+
+  .grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+    gap: 1.1rem;
+  }
+
+  .tile {
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    gap: 0.6rem;
+    padding: 1.4rem 1.3rem 1.5rem;
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    text-decoration: none;
+    color: var(--ink);
+    box-shadow: 0 1px 2px var(--shadow);
+    transition: transform 0.16s ease, box-shadow 0.16s ease, border-color 0.16s ease;
+  }
+
+  .tile:hover, .tile:focus-visible {
+    transform: translateY(-2px);
+    border-color: color-mix(in srgb, var(--accent) 45%, var(--line));
+    box-shadow: 0 10px 24px var(--shadow);
+  }
+
+  .tile:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+  }
+
+  .tile-icon {
+    width: 34px;
+    height: 34px;
+    border-radius: 8px;
+    background: var(--accent-soft);
+    color: var(--accent);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 0.78rem;
+    font-weight: 700;
+    letter-spacing: -0.02em;
+  }
+
+  .tile-name {
+    font-size: 1.05rem;
+    font-weight: 600;
+    margin: 0;
+  }
+
+  .tile-desc {
+    font-size: 0.88rem;
+    color: var(--muted);
+    margin: 0;
+  }
+
+  .tile-arrow {
+    margin-top: auto;
+    padding-top: 0.5rem;
+    font-size: 0.78rem;
+    color: var(--accent);
+    display: flex;
+    align-items: center;
+    gap: 0.3rem;
+  }
+
+  /* Placeholder tile for tools not yet built */
+  .tile.placeholder {
+    align-items: flex-start;
+    background: transparent;
+    border: 1.5px dashed var(--line);
+    box-shadow: none;
+    color: var(--muted);
+  }
+
+  .tile.placeholder:hover {
+    transform: none;
+    border-color: var(--muted);
+    box-shadow: none;
+  }
+
+  .tile.placeholder .tile-icon {
+    background: transparent;
+    border: 1.5px dashed var(--line);
+    color: var(--muted);
+  }
+
+  footer {
+    max-width: 1040px;
+    margin: 0 auto;
+    padding: 0 1.75rem 3rem;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    color: var(--muted);
+    font-size: 0.78rem;
+  }
+
+  footer .glyph {
+    width: 7px;
+    height: 7px;
+    border-radius: 2px;
+    background: var(--accent);
+    display: inline-block;
+    margin-right: 0.4rem;
+    vertical-align: middle;
+  }
+</style>
+</head>
+<body>
+
+<header class="hero">
+  <span class="brand-mark">
+    <span class="glyph" aria-hidden="true"></span>
+    <span class="word">servicenow</span>
+  </span>
+
+  <div class="hero-body">
+    <p class="eyebrow mono">Internal tool hub</p>
+    <h1 class="hero-title display">NowProductions Tools</h1>
+    <p class="hero-sub">One home for the tools NowProductions builds. Pick a tile to jump in — new tools land here as they ship.</p>
+    <div class="hero-bar" aria-hidden="true"></div>
+  </div>
+</header>
+
+<main class="tools">
+  <div class="tools-head">
+    <h2 class="mono">Tools</h2>
+    <span class="tools-count mono">3 live</span>
+  </div>
+
+  <div class="grid">
+    <a class="tile" href="/lower-third">
+      <span class="tile-icon" aria-hidden="true">LT</span>
+      <p class="tile-name display">Lower Third Generator</p>
+      <p class="tile-desc">Batch-render ServiceNow-brand name/title lower thirds as transparent ProRes videos.</p>
+      <span class="tile-arrow mono">Open →</span>
+    </a>
+
+    <a class="tile" href="/graphics">
+      <span class="tile-icon" aria-hidden="true">GX</span>
+      <p class="tile-name display">Graphics Generator</p>
+      <p class="tile-desc">Batch-render title cards, outro cards, and quote cards in the same ServiceNow brand style.</p>
+      <span class="tile-arrow mono">Open →</span>
+    </a>
+
+    <a class="tile" href="/teleprompter">
+      <span class="tile-icon" aria-hidden="true">TP</span>
+      <p class="tile-name display">Teleprompter Formatter</p>
+      <p class="tile-desc">Upload or paste a talk track and read it back as a full-screen, scrollable teleprompter with a clean, readable format.</p>
+      <span class="tile-arrow mono">Open →</span>
+    </a>
+
+    <div class="tile placeholder">
+      <span class="tile-icon" aria-hidden="true">+</span>
+      <p class="tile-name display">Next tool lands here</p>
+      <p class="tile-desc">New tiles show up in this grid as soon as they're built.</p>
+    </div>
+  </div>
+</main>
+
+<footer>
+  <span><span class="glyph" aria-hidden="true"></span>NowProductions</span>
+  <span class="mono">servicenow.com</span>
+</footer>
+
+</body>
+</html>

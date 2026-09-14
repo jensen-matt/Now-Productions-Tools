@@ -1,0 +1,7 @@
+node_modules
+.tools
+out
+.remotion
+app/dist
+*.log
+.env

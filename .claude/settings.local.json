@@ -1,0 +1,16 @@
+{
+  "permissions": {
+    "allow": [
+      "Artifact",
+      "Read(//private/tmp/**)",
+      "Bash(echo 'Hello from a plain text talk track. *)",
+      "Bash(curl -s -o /dev/null -w \"landing: %{http_code}\\\\n\" http://localhost:4000/)",
+      "Bash(curl -s -o /dev/null -w \"teleprompter route: %{http_code}\\\\n\" http://localhost:4000/teleprompter)",
+      "Bash(curl -s -o /dev/null -w \"teleprompter asset: %{http_code}\\\\n\" http://localhost:4000/teleprompter/assets/index-PJKP5pJ5.js)",
+      "Bash(curl -s -X POST http://localhost:4000/api/parse-file -F \"file=@node_modules/pdf-parse/test/data/01-valid.pdf\")",
+      "Bash(curl -s -X POST http://localhost:4000/api/parse-file -F \"file=@node_modules/mammoth/test/test-data/underline.docx\")",
+      "Bash(pkill -f \"node app/server.mjs\")",
+      "Bash(rm -f /tmp/sample.txt /tmp/nowprod-server.log)"
+    ]
+  }
+}

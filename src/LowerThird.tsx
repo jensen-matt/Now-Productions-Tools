@@ -58,8 +58,29 @@ const SCALE = 1.3;
 // x1/y1/x2/y2 here to reshape the whole transition's feel without
 // touching any of the timing fractions below.
 const TRANSITION_EASE = cubicBezier(0.5, 0, 0.75, 0);
-function bezierExit(t: number, start: number, duration: number): number {
-	return TRANSITION_EASE(clamp((t - start) / duration, 0, 1));
+// The text's own active window is a narrow slice of the full transition
+// (see TEXT_FRACTION below), so feeding it through TRANSITION_EASE re-creates,
+// inside that slice, exactly the "sits there, then rushes" shape the comment
+// above rejected for the frame — on entrance that reads as the text jumping
+// from invisible to ~30% opacity in a single frame, then crawling the rest
+// of the way.
+//
+// bezierExit()'s (t - start) / duration runs backwards over real time on
+// entrance (t counts down), so whatever curve we hand it gets time-mirrored
+// — an ease-in shape (slow start, fast finish) comes out the other side as
+// ease-out (fast start, slow finish) in real time. A standard "ease-in"
+// bezier here is what reads, on screen, as an ordinary ease-out: it starts
+// moving the instant its window opens (no dead-flat lead-in) and settles
+// with zero velocity (no rushed finish) — unlike an ease-in-out, whose slow
+// start becomes a slow start here too, reading as a delayed fade-in.
+const TEXT_EASE = cubicBezier(0.42, 0, 1, 1);
+function bezierExit(
+	t: number,
+	start: number,
+	duration: number,
+	ease: (x: number) => number = TRANSITION_EASE,
+): number {
+	return ease(clamp((t - start) / duration, 0, 1));
 }
 
 // Shortened from 1.1s — snappier both because of the stronger curve above
@@ -77,8 +98,34 @@ const TRANSITION_DURATION = 0.8;
 // The frame starts fading once this far through that squeeze+slide.
 const FADE_START_T = 0.65;
 // Fraction of the transition the text takes to finish fading/sliding —
-// comfortably inside the frame's own motion.
-const TEXT_FRACTION = 0.5;
+// comfortably inside the frame's own motion. This window is anchored to
+// t=0 (see bezierExit's calls below), so on the *entrance* — where t
+// counts down from 1 — text stays fully invisible until t drops below
+// this fraction: a bigger fraction means less dead time staring at an
+// empty-but-formed plate before the text starts moving. 0.5 (text
+// invisible for the transition's first half, all motion crammed into the
+// second) read as a late, delayed fade-in; 0.75 starts the text while the
+// frame is still mid-squeeze instead of waiting for it to finish.
+const TEXT_FRACTION = 0.75;
+// Within that window, the slide finishes after only this fraction of it —
+// well before the fade does. Without this gap, slide and fade finish at
+// the exact same instant, which means the last few percent of the slide
+// play out while the text is already ~85-98% opaque: a fully-visible object
+// still visibly creeping the last couple of px, which reads as a little
+// snap/settle even though the underlying values move continuously. Ending
+// the slide early means it's already at rest for the back portion of the
+// window, while only opacity is still (smoothly) climbing.
+const TEXT_SLIDE_FRACTION = 0.7;
+// Optical left-margin correction for the name line only, in final rendered
+// px (not multiplied by SCALE — tuned by eye against the actual output,
+// not a design-spec geometry value). The name and title/company blocks
+// share the exact same CSS left edge (same padding, no per-line margin),
+// but a bold 52px glyph's left-side-bearing and a regular 23px glyph's
+// left-side-bearing rarely match, so different name/title text can still
+// look unaligned even though the boxes are pixel-identical. Nudging only
+// the name (never the title/company) keeps the title block as the fixed
+// reference edge.
+const NAME_LEFT_NUDGE = -3;
 // The squeeze bottoms out here, not at 0 — a hairline sliver stays visible
 // so the fade (phase 2) and slide-off (phase 3) have something to animate,
 // rather than a zero-height frame that's already invisible either way.
@@ -95,7 +142,7 @@ const TEXT_SLIDE = 14 * SCALE;
 // so the two variants each render at a constant, predictable height.
 const NAME_SIZE = 40 * SCALE;
 const NAME_LINE_HEIGHT = 1.1;
-const TITLE_SIZE = 22 * SCALE;
+const TITLE_SIZE = 18 * SCALE;
 const TITLE_LINE_HEIGHT = 1.15;
 const LINE_GAP = 2 * SCALE;
 const PLATE_PAD_TOP = 20 * SCALE;
@@ -141,16 +188,39 @@ function transitionState(t: number) {
 	// TRANSITION_DURATION). Bottoms out at MIN_SQUEEZE_SCALE/FRAME_SLIDE
 	// rather than 0/further, since a fully-shrunk, fully-displaced frame
 	// would leave nothing for the fade below to visibly act on.
-	const frameProgress = bezierExit(t, 0, 1);
+	let frameProgress = bezierExit(t, 0, 1);
+	// Chrome renders a transformed element's text differently depending on
+	// whether the transform is the exact identity (scaleY(1) translateY(0))
+	// or merely a value that rounds to it on screen — the identity case
+	// skips the compositing/resampling path a non-identity value forces,
+	// which resamples the text underneath it. TRANSITION_EASE only reaches
+	// exactly 0 on the very last rendered frame, so every frame before it
+	// carries a microscopic (sub-0.01px) non-zero residual — invisible on
+	// its own, but the switch to true identity on that last frame reads as
+	// a small pop, because it's a rendering-path change, not a continuation
+	// of the animation's own easing. Snapping to exactly 0 a few frames
+	// early — while the residual is already far below a pixel — means
+	// several consecutive tail frames share the exact same transform, so
+	// that rendering-path switch lands where nothing else is visibly
+	// changing either, instead of on the frame everyone's eye is on.
+	if (frameProgress < 0.002) frameProgress = 0;
 	const barScale = 1 - frameProgress * (1 - MIN_SQUEEZE_SCALE);
 	const plateScaleY = 1 - frameProgress * (1 - MIN_SQUEEZE_SCALE);
 	const frameY = frameProgress * FRAME_SLIDE;
 
-	// Text: slides down and fades together, done well before the frame
-	// finishes its own squeeze+slide.
-	const textProgress = bezierExit(t, 0, TEXT_FRACTION);
-	const textOpacity = 1 - textProgress;
-	const textY = textProgress * TEXT_SLIDE;
+	// Text: fades over its whole window, done well before the frame
+	// finishes its own squeeze+slide (see TEXT_FRACTION above).
+	const textFadeProgress = bezierExit(t, 0, TEXT_FRACTION, TEXT_EASE);
+	const textOpacity = 1 - textFadeProgress;
+	// The slide uses the tail end of that same window (see
+	// TEXT_SLIDE_FRACTION above) so it comes to rest before the fade does.
+	const textSlideProgress = bezierExit(
+		t,
+		TEXT_FRACTION * (1 - TEXT_SLIDE_FRACTION),
+		TEXT_FRACTION * TEXT_SLIDE_FRACTION,
+		TEXT_EASE,
+	);
+	const textY = textSlideProgress * TEXT_SLIDE;
 
 	// Once the frame is FADE_START_T of the way through the transition,
 	// it starts fading too, continuing through to the end.
@@ -289,7 +359,19 @@ export const LowerThird: React.FC<LowerThirdProps> = ({
 						<div
 							style={{
 								opacity: textOpacity,
-								transform: `translateY(${textY}px)`,
+								transform: `translateX(${NAME_LEFT_NUDGE}px) translateY(${textY}px)`,
+								// Keeps this on the same GPU-composited layer at every
+								// opacity value, including 1 — without it, Chrome only
+								// promotes the layer while opacity < 1 (forcing grayscale
+								// AA instead of the direct-paint subpixel AA it uses once
+								// opacity settles at exactly 1), so the glyphs get
+								// re-rasterized slightly differently the instant the fade
+								// finishes, reading as the text's right edge hopping by a
+								// px or two right as the entrance settles. Pinning the
+								// layer for the text's entire lifetime — not just while
+								// animating — makes every frame use the same rendering
+								// path, fade or fully visible alike.
+								willChange: "opacity",
 							}}
 						>
 							<div
@@ -311,6 +393,8 @@ export const LowerThird: React.FC<LowerThirdProps> = ({
 							style={{
 								opacity: textOpacity,
 								transform: `translateY(${textY}px)`,
+								// See the matching comment on the name block above.
+								willChange: "opacity",
 							}}
 						>
 							<div

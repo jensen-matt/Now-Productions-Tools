@@ -348,28 +348,7 @@
     <span class="tools-count mono">3 live</span>
   </div>
 
-  <div class="grid">
-    <a class="tile" href="/lower-third">
-      <span class="tile-icon" aria-hidden="true">LT</span>
-      <p class="tile-name display">Lower Third Generator</p>
-      <p class="tile-desc">Batch-render ServiceNow-brand name/title lower thirds as transparent ProRes videos.</p>
-      <span class="tile-arrow mono">Open →</span>
-    </a>
-
-    <a class="tile" href="/graphics">
-      <span class="tile-icon" aria-hidden="true">GX</span>
-      <p class="tile-name display">Graphics Generator</p>
-      <p class="tile-desc">Batch-render title cards, outro cards, and quote cards in the same ServiceNow brand style.</p>
-      <span class="tile-arrow mono">Open →</span>
-    </a>
-
-    <a class="tile" href="/teleprompter">
-      <span class="tile-icon" aria-hidden="true">TP</span>
-      <p class="tile-name display">Teleprompter Formatter</p>
-      <p class="tile-desc">Upload or paste a talk track and read it back as a full-screen, scrollable teleprompter with a clean, readable format.</p>
-      <span class="tile-arrow mono">Open →</span>
-    </a>
-
+  <div class="grid" id="tools-grid">
     <div class="tile placeholder">
       <span class="tile-icon" aria-hidden="true">+</span>
       <p class="tile-name display">Next tool lands here</p>
@@ -377,6 +356,47 @@
     </div>
   </div>
 </main>
+
+<script>
+  fetch("/tools.json")
+    .then((res) => res.json())
+    .then((tools) => {
+      const visible = tools.filter((tool) => tool.visible);
+      const grid = document.getElementById("tools-grid");
+      const placeholder = grid.querySelector(".tile.placeholder");
+
+      for (const tool of visible) {
+        const tile = document.createElement("a");
+        tile.className = "tile";
+        tile.href = tool.href;
+
+        const icon = document.createElement("span");
+        icon.className = "tile-icon";
+        icon.setAttribute("aria-hidden", "true");
+        icon.textContent = tool.icon;
+
+        const name = document.createElement("p");
+        name.className = "tile-name display";
+        name.textContent = tool.name;
+
+        const desc = document.createElement("p");
+        desc.className = "tile-desc";
+        desc.textContent = tool.desc;
+
+        const arrow = document.createElement("span");
+        arrow.className = "tile-arrow mono";
+        arrow.textContent = "Open →";
+
+        tile.append(icon, name, desc, arrow);
+        grid.insertBefore(tile, placeholder);
+      }
+
+      document.querySelector(".tools-count").textContent = `${visible.length} live`;
+    })
+    .catch(() => {
+      document.querySelector(".tools-count").textContent = "";
+    });
+</script>
 
 <footer>
   <span><span class="glyph" aria-hidden="true"></span>NowProductions</span>

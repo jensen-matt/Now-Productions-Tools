@@ -7,9 +7,8 @@ import {
 	useCurrentFrame,
 	useVideoConfig,
 } from "remotion";
-import { clamp } from "./easing";
+import { clamp, cubicBezier } from "./easing";
 import type { LowerThirdProps } from "./schema";
-import { enter, exit, pop } from "./timelineHelpers";
 
 // Substitute for "ServiceNow Sans Display" / "ServiceNow Sans" (not
 // redistributable) — Inter is a comparable humanist grotesque, per the
@@ -23,76 +22,187 @@ const { fontFamily: interFamily } = loadFont("normal", {
 const NAME_FONT_FAMILY = `"ServiceNow Sans Display", "ServiceNow Sans", ${interFamily}, sans-serif`;
 const TITLE_FONT_FAMILY = `"ServiceNow Sans", ${interFamily}, sans-serif`;
 
-// Timeline constants, in seconds — ported 1:1 from
-// design_handoff_lower_third_generator/lower-third-scene.jsx
-const ENTER_END = 0.6;
-const BAR_END = 0.45;
-const NAME_START = 0.12;
-const NAME_END = 0.62;
-const TITLE_START = 0.26;
-const TITLE_END = 0.74;
-const EXIT_DUR = 0.8;
+// Overall size multiplier on top of the design spec's original geometry —
+// applied to every px constant below (type sizes, padding, position,
+// motion distances) so the graphic scales up as one uniform unit rather
+// than just growing its text.
+const SCALE = 1.3;
+
+// The exit is one choreographed sequence — see transitionState() below —
+// and the entrance is that exact sequence played backwards, so the two
+// are guaranteed to be mirror images of each other rather than two
+// separately hand-tuned approximations.
+//
+// Exit, forward (t: 0 -> 1 over TRANSITION_DURATION seconds):
+//   1. The frame (bar + plate) squeezes AND slides down together — not
+//      sequentially — while the text slides down and fades out,
+//      finishing well within that span.
+//   2. Once the frame is mostly done shrinking/sliding, it starts fading
+//      too, continuing through the rest of its motion and a bit beyond.
+// Entrance is the same beats in reverse: the frame travels up into place
+// as it un-squeezes (not a separate slide-then-grow), and the text starts
+// visibly moving the instant it starts fading in (not after a delay) —
+// both are the result of using an accelerating curve for this forward/exit
+// direction on every animated value. Reversed for the entrance, an
+// accelerating curve reads as decelerating (fast start, easing to a stop),
+// which is what makes everything begin moving immediately instead of
+// lingering near its start value before rushing at the end.
+//
+// TRANSITION_EASE is a CSS-style cubic-bezier "accelerate" curve — an
+// easeInQuart shape, clearly non-linear (obviously speeds up, not the
+// near-constant feel of the gentler Material "accelerate" (0.4, 0, 1, 1)
+// this started as) without being as extreme as easeInExpo/Quint, which
+// rushed through ~90%+ of the motion in the first few frames and then just
+// sat there for a while before the text even started. Bezier control
+// points can express a curve that doesn't have to mirror itself, so tweak
+// x1/y1/x2/y2 here to reshape the whole transition's feel without
+// touching any of the timing fractions below.
+const TRANSITION_EASE = cubicBezier(0.5, 0, 0.75, 0);
+function bezierExit(t: number, start: number, duration: number): number {
+	return TRANSITION_EASE(clamp((t - start) / duration, 0, 1));
+}
+
+// Shortened from 1.1s — snappier both because of the stronger curve above
+// and because the whole thing now just takes less time.
+const TRANSITION_DURATION = 0.8;
+// The frame's combined squeeze+slide spans the *entire* transition (not a
+// leading fraction of it) — it needs to start changing at t=0 so the exit
+// visibly starts right away, but it also needs to still be changing all
+// the way to t=1, because whatever's true at t=1 is where the reversed
+// entrance BEGINS. A squeeze that finished early (say by t=0.7) would just
+// sit idle for the rest of the exit — invisible in the exit's own tail,
+// but reversed, that idle stretch becomes a dead zone at the START of the
+// entrance where the frame doesn't move yet. Spanning the full [0,1]
+// keeps it moving right up to both ends.
+// The frame starts fading once this far through that squeeze+slide.
+const FADE_START_T = 0.65;
+// Fraction of the transition the text takes to finish fading/sliding —
+// comfortably inside the frame's own motion.
+const TEXT_FRACTION = 0.5;
+// The squeeze bottoms out here, not at 0 — a hairline sliver stays visible
+// so the fade (phase 2) and slide-off (phase 3) have something to animate,
+// rather than a zero-height frame that's already invisible either way.
+const MIN_SQUEEZE_SCALE = 0.04;
+
+// Motion distances, in px (pre-scale) — how far the frame slides
+// off-screen vs. how far the text slides while fading.
+const FRAME_SLIDE = 64 * SCALE;
+const TEXT_SLIDE = 14 * SCALE;
 
 // Plate geometry, in px — matches the design spec's padding (20px 32px
-// 22px) and type sizes exactly. Height is fixed per mode (one line vs.
-// two lines of title) rather than shrinking/growing with content, so the
-// two variants each render at a constant, predictable height.
-const NAME_SIZE = 40;
+// 22px) and type sizes exactly, times SCALE. Height is fixed per mode (one
+// line vs. two lines of title) rather than shrinking/growing with content,
+// so the two variants each render at a constant, predictable height.
+const NAME_SIZE = 40 * SCALE;
 const NAME_LINE_HEIGHT = 1.1;
-const TITLE_SIZE = 22;
-const TITLE_LINE_HEIGHT = 1.3;
-const LINE_GAP = 4;
-const PLATE_PAD_TOP = 20;
-const PLATE_PAD_BOTTOM = 22;
-const PLATE_PAD_X = 32;
+const TITLE_SIZE = 22 * SCALE;
+const TITLE_LINE_HEIGHT = 1.15;
+const LINE_GAP = 2 * SCALE;
+const PLATE_PAD_TOP = 20 * SCALE;
+const PLATE_PAD_BOTTOM = 22 * SCALE;
+const PLATE_PAD_X = 32 * SCALE;
+const PLATE_RADIUS = 14 * SCALE;
+
+const BAR_WIDTH = 64 * SCALE;
+const BAR_HEIGHT = 5 * SCALE;
+const BAR_RADIUS = 3 * SCALE;
+const BAR_MARGIN_BOTTOM = 14 * SCALE;
+
+const PLATE_LEFT = 96 * SCALE;
+const PLATE_BOTTOM = 90 * SCALE;
 
 const nameLinePx = NAME_SIZE * NAME_LINE_HEIGHT;
 const titleLinePx = TITLE_SIZE * TITLE_LINE_HEIGHT;
 
-const PLATE_HEIGHT_1_LINE =
-	PLATE_PAD_TOP + PLATE_PAD_BOTTOM + nameLinePx + LINE_GAP + titleLinePx;
-const PLATE_HEIGHT_2_LINE = PLATE_HEIGHT_1_LINE + LINE_GAP + titleLinePx;
+// Plate height for a given number of title-block lines (title, plus an
+// optional second title line, plus an optional company line — all set at
+// TITLE_SIZE) below the fixed name line.
+function plateHeightFor(titleLineCount: number): number {
+	return (
+		PLATE_PAD_TOP +
+		PLATE_PAD_BOTTOM +
+		nameLinePx +
+		LINE_GAP +
+		titleLineCount * titleLinePx +
+		(titleLineCount - 1) * LINE_GAP
+	);
+}
+
+// Every animated value as a pure function of exit-relative progress t (0
+// at fully settled/visible, 1 at fully gone). Every ramp below uses
+// bezierExit() (TRANSITION_EASE, accelerating) for this forward direction
+// — see the comment on TRANSITION_EASE for why that's what makes the
+// reversed entrance feel immediate rather than laggy.
+function transitionState(t: number) {
+	// Frame: squeezes (bar width, plate height) AND slides toward
+	// off-screen together, from the same progress value — not
+	// sequentially — spanning the full transition so it's already moving
+	// at t=0 and still moving at t=1 (see the comment on
+	// TRANSITION_DURATION). Bottoms out at MIN_SQUEEZE_SCALE/FRAME_SLIDE
+	// rather than 0/further, since a fully-shrunk, fully-displaced frame
+	// would leave nothing for the fade below to visibly act on.
+	const frameProgress = bezierExit(t, 0, 1);
+	const barScale = 1 - frameProgress * (1 - MIN_SQUEEZE_SCALE);
+	const plateScaleY = 1 - frameProgress * (1 - MIN_SQUEEZE_SCALE);
+	const frameY = frameProgress * FRAME_SLIDE;
+
+	// Text: slides down and fades together, done well before the frame
+	// finishes its own squeeze+slide.
+	const textProgress = bezierExit(t, 0, TEXT_FRACTION);
+	const textOpacity = 1 - textProgress;
+	const textY = textProgress * TEXT_SLIDE;
+
+	// Once the frame is FADE_START_T of the way through the transition,
+	// it starts fading too, continuing through to the end.
+	const fadeProgress = bezierExit(t, FADE_START_T, 1 - FADE_START_T);
+	const frameOpacity = 1 - fadeProgress;
+
+	return { barScale, plateScaleY, frameOpacity, frameY, textOpacity, textY };
+}
 
 export const LowerThird: React.FC<LowerThirdProps> = ({
 	name,
 	title,
 	title2,
+	company,
 	width,
 }) => {
 	const frame = useCurrentFrame();
 	const { fps, durationInFrames } = useVideoConfig();
 
 	const localTime = frame / fps;
-	const dur = durationInFrames / fps;
-	const exitStart = dur - EXIT_DUR;
+	// Use the last rendered frame's time (durationInFrames - 1), not
+	// durationInFrames/fps — the latter is one frame past what's ever
+	// actually rendered, so the exit would still be short of its fully-gone
+	// state on the final frame.
+	const dur = (durationInFrames - 1) / fps;
+	const exitStart = dur - TRANSITION_DURATION;
 
 	const hasSecondLine = title2.trim().length > 0;
-	const plateHeight = hasSecondLine ? PLATE_HEIGHT_2_LINE : PLATE_HEIGHT_1_LINE;
+	const hasCompany = company.trim().length > 0;
+	const titleLineCount = 1 + (hasSecondLine ? 1 : 0) + (hasCompany ? 1 : 0);
+	const plateHeight = plateHeightFor(titleLineCount);
 
-	const inExit = localTime > exitStart;
-	const exitT = inExit ? exit(localTime, exitStart, EXIT_DUR) : 0;
+	// t is exit-relative progress: 0 while fully settled, ramping to 1 as
+	// the exit finishes. During the entrance it's the same scale played
+	// backwards (1 -> 0), and it's pinned to 0 in between.
+	let t: number;
+	if (localTime > exitStart) {
+		t = clamp((localTime - exitStart) / TRANSITION_DURATION, 0, 1);
+	} else if (localTime < TRANSITION_DURATION) {
+		t = 1 - clamp(localTime / TRANSITION_DURATION, 0, 1);
+	} else {
+		t = 0;
+	}
 
-	// Plate: slides up + fades in, then reverses out.
-	const plateInT = enter(localTime, ENTER_END);
-	const plateY = inExit ? exitT * 36 : (1 - plateInT) * 36;
-	const plateOpacity = inExit ? 1 - exitT : plateInT;
-
-	// Accent bar: grows width in with slight overshoot, shrinks out.
-	const barInT = pop(localTime, BAR_END);
-	const barScaleIn = clamp(barInT, 0, 1);
-	const barScale = inExit ? 1 - exitT : barScaleIn;
-
-	// Name: staggered slide/fade in, exits with the plate.
-	const nameInT =
-		localTime < NAME_START ? 0 : enter(localTime - NAME_START, NAME_END - NAME_START);
-	const nameOpacity = inExit ? 1 - exitT : nameInT;
-	const nameY = inExit ? exitT * 14 : (1 - nameInT) * 14;
-
-	// Title (both lines move as one unit): staggered further, exits with the plate.
-	const titleInT =
-		localTime < TITLE_START ? 0 : enter(localTime - TITLE_START, TITLE_END - TITLE_START);
-	const titleOpacity = inExit ? 1 - exitT : titleInT;
-	const titleY = inExit ? exitT * 14 : (1 - titleInT) * 14;
+	const { barScale, plateScaleY, frameOpacity, frameY, textOpacity, textY } = transitionState(t);
+	// The name/title text sits inside the plate div, which is being
+	// scaleY'd for the squeeze — without correction, that scale cascades
+	// to the text too, visibly squashing/stretching the glyphs as the
+	// plate resizes. This counter-scale cancels it out so the text always
+	// renders at its true proportions, on a separate inner wrapper so it
+	// doesn't also cancel out the text's own translateY slide.
+	const textCounterScaleY = 1 / plateScaleY;
 
 	const titleLineStyle: React.CSSProperties = {
 		fontFamily: TITLE_FONT_FAMILY,
@@ -103,28 +213,29 @@ export const LowerThird: React.FC<LowerThirdProps> = ({
 		lineHeight: TITLE_LINE_HEIGHT,
 		whiteSpace: "nowrap",
 	};
+	const companyLineStyle: React.CSSProperties = { ...titleLineStyle, fontWeight: 700 };
 
 	return (
 		<AbsoluteFill>
 			<div
 				style={{
 					position: "absolute",
-					left: 96,
-					bottom: 90,
+					left: PLATE_LEFT,
+					bottom: PLATE_BOTTOM,
 					display: "flex",
 					flexDirection: "column",
 					alignItems: "flex-start",
-					transform: `translateY(${plateY}px)`,
-					opacity: plateOpacity,
+					transform: `translateY(${frameY}px)`,
+					opacity: frameOpacity,
 				}}
 			>
 				<div
 					style={{
-						width: 64,
-						height: 5,
-						borderRadius: 3,
+						width: BAR_WIDTH,
+						height: BAR_HEIGHT,
+						borderRadius: BAR_RADIUS,
 						background: "#63DF4E",
-						marginBottom: 14,
+						marginBottom: BAR_MARGIN_BOTTOM,
 						transform: `scaleX(${barScale})`,
 						transformOrigin: "left center",
 					}}
@@ -135,9 +246,10 @@ export const LowerThird: React.FC<LowerThirdProps> = ({
 						width: width ? `${width}px` : undefined,
 						height: plateHeight,
 						boxSizing: "border-box",
-						borderRadius: 14,
-						boxShadow: "0 12px 32px rgba(3,45,66,0.35)",
+						borderRadius: PLATE_RADIUS,
 						overflow: "hidden",
+						transform: `scaleY(${plateScaleY})`,
+						transformOrigin: "center bottom",
 					}}
 				>
 					<Img
@@ -176,32 +288,47 @@ export const LowerThird: React.FC<LowerThirdProps> = ({
 					>
 						<div
 							style={{
-								fontFamily: NAME_FONT_FAMILY,
-								fontWeight: 700,
-								fontSize: NAME_SIZE,
-								color: "#63DF4E",
-								letterSpacing: "-0.01em",
-								lineHeight: NAME_LINE_HEIGHT,
-								opacity: nameOpacity,
-								transform: `translateY(${nameY}px)`,
-								whiteSpace: "nowrap",
+								opacity: textOpacity,
+								transform: `translateY(${textY}px)`,
 							}}
 						>
-							{name}
+							<div
+								style={{
+									fontFamily: NAME_FONT_FAMILY,
+									fontWeight: 700,
+									fontSize: NAME_SIZE,
+									color: "#63DF4E",
+									letterSpacing: "-0.01em",
+									lineHeight: NAME_LINE_HEIGHT,
+									whiteSpace: "nowrap",
+									transform: `scaleY(${textCounterScaleY})`,
+								}}
+							>
+								{name}
+							</div>
 						</div>
 						<div
 							style={{
-								display: "flex",
-								flexDirection: "column",
-								gap: LINE_GAP,
-								opacity: titleOpacity,
-								transform: `translateY(${titleY}px)`,
+								opacity: textOpacity,
+								transform: `translateY(${textY}px)`,
 							}}
 						>
-							<div style={titleLineStyle}>{title}</div>
-							{hasSecondLine ? (
-								<div style={titleLineStyle}>{title2}</div>
-							) : null}
+							<div
+								style={{
+									display: "flex",
+									flexDirection: "column",
+									gap: LINE_GAP,
+									transform: `scaleY(${textCounterScaleY})`,
+								}}
+							>
+								<div style={titleLineStyle}>{title}</div>
+								{hasSecondLine ? (
+									<div style={titleLineStyle}>{title2}</div>
+								) : null}
+								{hasCompany ? (
+									<div style={companyLineStyle}>{company}</div>
+								) : null}
+							</div>
 						</div>
 					</div>
 				</div>

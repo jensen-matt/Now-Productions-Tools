@@ -1,5 +1,5 @@
 import React, { useRef, useState } from "react";
-import { chooseFolder, renderGraphic } from "./api";
+import { renderGraphic, saveRender, saveZip, type RenderResult } from "./api";
 import { Card } from "./Card";
 import {
 	createEntry,
@@ -13,10 +13,8 @@ const KINDS: GraphicKind[] = ["title", "outro", "quote"];
 
 export const App: React.FC = () => {
 	const [entries, setEntries] = useState<GraphicEntry[]>([]);
-	const [outputDir, setOutputDir] = useState("out");
-	const [folderPickerError, setFolderPickerError] = useState<string | null>(null);
-	const [isChoosingFolder, setIsChoosingFolder] = useState(false);
-	const [isRenderingAll, setIsRenderingAll] = useState(false);
+	const [allPhase, setAllPhase] = useState<"idle" | "rendering" | "saving">("idle");
+	const [zipError, setZipError] = useState<string | null>(null);
 	const entriesRef = useRef<GraphicEntry[]>(entries);
 	entriesRef.current = entries;
 
@@ -38,21 +36,22 @@ export const App: React.FC = () => {
 		setEntries((prev) => prev.filter((entry) => entry.id !== id));
 	};
 
-	const runRender = async (id: string) => {
+	// Renders, then immediately saves — one click, one combined action. The
+	// save dialog fires right in this same handler so it's still within the
+	// gesture from the click that started it.
+	const runRenderAndSave = async (id: string): Promise<RenderResult | undefined> => {
 		const entry = entriesRef.current.find((e) => e.id === id);
-		if (!entry) return;
+		if (!entry) return undefined;
 
 		setEntries((prev) =>
 			prev.map((e) =>
 				e.id === id ? { ...e, status: "rendering", progress: 0, errorMessage: undefined } : e,
 			),
 		);
+		let result: RenderResult;
 		try {
-			const outputPath = await renderGraphic(entry, outputDir.trim() || "out", (progress) =>
+			result = await renderGraphic(entry, (progress) =>
 				setEntries((prev) => prev.map((e) => (e.id === id ? { ...e, progress } : e))),
-			);
-			setEntries((prev) =>
-				prev.map((e) => (e.id === id ? { ...e, status: "done", progress: 1, outputPath } : e)),
 			);
 		} catch (err) {
 			setEntries((prev) =>
@@ -66,29 +65,81 @@ export const App: React.FC = () => {
 						: e,
 				),
 			);
+			return undefined;
 		}
-	};
 
-	const handleChooseFolder = async () => {
-		setIsChoosingFolder(true);
-		setFolderPickerError(null);
+		setEntries((prev) =>
+			prev.map((e) =>
+				e.id === id
+					? { ...e, status: "saving", progress: 1, token: result.token, filename: result.filename }
+					: e,
+			),
+		);
 		try {
-			const path = await chooseFolder();
-			if (path) setOutputDir(path);
+			await saveRender(result.token, result.filename);
+			setEntries((prev) => prev.map((e) => (e.id === id ? { ...e, status: "saved" } : e)));
 		} catch (err) {
-			setFolderPickerError(err instanceof Error ? err.message : String(err));
-		} finally {
-			setIsChoosingFolder(false);
+			setEntries((prev) =>
+				prev.map((e) =>
+					e.id === id
+						? { ...e, status: "error", errorMessage: err instanceof Error ? err.message : String(err) }
+						: e,
+				),
+			);
+			return undefined;
 		}
+		return result;
 	};
 
-	const handleRenderAll = async () => {
-		setIsRenderingAll(true);
+	// Renders every entry, then saves them all as one zip — same
+	// render-then-save shape as a single card, just batched.
+	const handleRenderAndSaveAll = async () => {
+		setZipError(null);
+		setAllPhase("rendering");
+		const rendered: RenderResult[] = [];
 		for (const entry of entries) {
 			if (!isRenderable(entry)) continue;
-			await runRender(entry.id);
+			setEntries((prev) =>
+				prev.map((e) =>
+					e.id === entry.id ? { ...e, status: "rendering", progress: 0, errorMessage: undefined } : e,
+				),
+			);
+			try {
+				const result = await renderGraphic(entry, (progress) =>
+					setEntries((prev) => prev.map((e) => (e.id === entry.id ? { ...e, progress } : e))),
+				);
+				setEntries((prev) =>
+					prev.map((e) =>
+						e.id === entry.id
+							? { ...e, status: "done", progress: 1, token: result.token, filename: result.filename }
+							: e,
+					),
+				);
+				rendered.push(result);
+			} catch (err) {
+				setEntries((prev) =>
+					prev.map((e) =>
+						e.id === entry.id
+							? { ...e, status: "error", errorMessage: err instanceof Error ? err.message : String(err) }
+							: e,
+					),
+				);
+			}
 		}
-		setIsRenderingAll(false);
+
+		if (rendered.length > 0) {
+			setAllPhase("saving");
+			try {
+				await saveZip(rendered.map((r) => r.token), "graphics.zip");
+				const tokens = new Set(rendered.map((r) => r.token));
+				setEntries((prev) =>
+					prev.map((e) => (e.token && tokens.has(e.token) ? { ...e, status: "saved" } : e)),
+				);
+			} catch (err) {
+				setZipError(err instanceof Error ? err.message : String(err));
+			}
+		}
+		setAllPhase("idle");
 	};
 
 	return (
@@ -129,44 +180,19 @@ export const App: React.FC = () => {
 
 				{entries.length > 0 ? (
 					<section className="roster-actions">
-						<div className="output-dir-field">
-							<label htmlFor="outputDir">Save to folder</label>
-							<div className="output-dir-controls">
-								<input
-									id="outputDir"
-									type="text"
-									value={outputDir}
-									onChange={(e) => setOutputDir(e.target.value)}
-									placeholder="out"
-								/>
-								<button
-									type="button"
-									disabled={isChoosingFolder}
-									onClick={handleChooseFolder}
-								>
-									{isChoosingFolder ? "Choosing…" : "Choose folder…"}
-								</button>
-							</div>
-						</div>
-						{folderPickerError ? (
-							<span className="output-dir-hint output-dir-error">
-								{folderPickerError} — you can still type a path directly.
-							</span>
-						) : (
-							<span className="output-dir-hint">
-								Click "Choose folder…" to pick with Finder, or type a path —
-								relative paths resolve inside the project, absolute paths (e.g.
-								/Users/you/Movies/Graphics) save anywhere else.
-							</span>
-						)}
 						<button
 							type="button"
 							className="primary"
-							disabled={isRenderingAll}
-							onClick={handleRenderAll}
+							disabled={allPhase !== "idle"}
+							onClick={handleRenderAndSaveAll}
 						>
-							{isRenderingAll ? "Rendering all…" : `Render all (${entries.length})`}
+							{allPhase === "rendering"
+								? "Rendering all…"
+								: allPhase === "saving"
+									? "Saving…"
+									: `Render & save all (${entries.length})…`}
 						</button>
+						{zipError ? <span className="output-dir-hint output-dir-error">{zipError}</span> : null}
 					</section>
 				) : null}
 
@@ -177,7 +203,7 @@ export const App: React.FC = () => {
 							entry={entry}
 							onChange={handleChange}
 							onRemove={handleRemove}
-							onRender={runRender}
+							onRender={runRenderAndSave}
 						/>
 					))}
 				</section>

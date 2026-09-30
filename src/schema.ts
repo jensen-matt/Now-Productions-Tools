@@ -5,6 +5,8 @@ export const lowerThirdSchema = z.object({
 	title: z.string(),
 	// Empty string = single title line. Non-empty = second title line below the first.
 	title2: z.string(),
+	// Empty string = no company line. Non-empty = bold white line below the title (below title2 if present).
+	company: z.string(),
 	// Plate width in px. Leave unset to auto-fit the content (default).
 	width: z.number().min(200).max(1700).optional(),
 });

@@ -1,4 +1,4 @@
-export type RenderStatus = "idle" | "rendering" | "done" | "error";
+export type RenderStatus = "idle" | "rendering" | "done" | "saving" | "saved" | "error";
 
 export type Entry = {
 	id: string;
@@ -6,11 +6,13 @@ export type Entry = {
 	title: string;
 	hasTitle2: boolean;
 	title2: string;
+	company: string;
 	hasCustomWidth: boolean;
 	width: number;
 	status: RenderStatus;
 	progress: number;
-	outputPath?: string;
+	token?: string;
+	filename?: string;
 	errorMessage?: string;
 };
 

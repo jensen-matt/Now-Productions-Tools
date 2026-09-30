@@ -1,5 +1,5 @@
 import React, { useRef, useState } from "react";
-import { chooseFolder, renderEntry } from "./api";
+import { renderEntry, saveRender, saveZip, type RenderResult } from "./api";
 import { Card } from "./Card";
 import { parseRoster } from "./parseRoster";
 import type { Entry } from "./types";
@@ -7,10 +7,8 @@ import type { Entry } from "./types";
 export const App: React.FC = () => {
 	const [rosterText, setRosterText] = useState("");
 	const [entries, setEntries] = useState<Entry[]>([]);
-	const [outputDir, setOutputDir] = useState("out");
-	const [folderPickerError, setFolderPickerError] = useState<string | null>(null);
-	const [isChoosingFolder, setIsChoosingFolder] = useState(false);
-	const [isRenderingAll, setIsRenderingAll] = useState(false);
+	const [allPhase, setAllPhase] = useState<"idle" | "rendering" | "saving">("idle");
+	const [zipError, setZipError] = useState<string | null>(null);
 	const entriesRef = useRef<Entry[]>(entries);
 	entriesRef.current = entries;
 
@@ -31,46 +29,78 @@ export const App: React.FC = () => {
 		setEntries((prev) => prev.filter((entry) => entry.id !== id));
 	};
 
-	const runRender = async (id: string) => {
+	// Renders, then immediately saves — one click, one combined action. The
+	// save dialog fires right in this same handler so it's still within the
+	// gesture from the click that started it.
+	const runRenderAndSave = async (id: string): Promise<RenderResult | undefined> => {
 		const entry = entriesRef.current.find((e) => e.id === id);
-		if (!entry) return;
+		if (!entry) return undefined;
 
 		handleChange(id, { status: "rendering", progress: 0, errorMessage: undefined });
+		let result: RenderResult;
 		try {
-			const outputPath = await renderEntry(
-				entry,
-				outputDir.trim() || "out",
-				(progress) => handleChange(id, { progress }),
-			);
-			handleChange(id, { status: "done", progress: 1, outputPath });
+			result = await renderEntry(entry, (progress) => handleChange(id, { progress }));
 		} catch (err) {
 			handleChange(id, {
 				status: "error",
 				errorMessage: err instanceof Error ? err.message : String(err),
 			});
+			return undefined;
 		}
-	};
 
-	const handleChooseFolder = async () => {
-		setIsChoosingFolder(true);
-		setFolderPickerError(null);
+		handleChange(id, { status: "saving", progress: 1, token: result.token, filename: result.filename });
 		try {
-			const path = await chooseFolder();
-			if (path) setOutputDir(path);
+			await saveRender(result.token, result.filename);
+			handleChange(id, { status: "saved" });
 		} catch (err) {
-			setFolderPickerError(err instanceof Error ? err.message : String(err));
-		} finally {
-			setIsChoosingFolder(false);
+			handleChange(id, {
+				status: "error",
+				errorMessage: err instanceof Error ? err.message : String(err),
+			});
+			return undefined;
 		}
+		return result;
 	};
 
-	const handleRenderAll = async () => {
-		setIsRenderingAll(true);
+	// Renders every entry, then saves them all as one zip — same
+	// render-then-save shape as a single card, just batched.
+	const handleRenderAndSaveAll = async () => {
+		setZipError(null);
+		setAllPhase("rendering");
+		const rendered: RenderResult[] = [];
 		for (const entry of entries) {
 			if (!entry.name.trim() || !entry.title.trim()) continue;
-			await runRender(entry.id);
+			handleChange(entry.id, { status: "rendering", progress: 0, errorMessage: undefined });
+			try {
+				const result = await renderEntry(entry, (progress) => handleChange(entry.id, { progress }));
+				handleChange(entry.id, {
+					status: "done",
+					progress: 1,
+					token: result.token,
+					filename: result.filename,
+				});
+				rendered.push(result);
+			} catch (err) {
+				handleChange(entry.id, {
+					status: "error",
+					errorMessage: err instanceof Error ? err.message : String(err),
+				});
+			}
 		}
-		setIsRenderingAll(false);
+
+		if (rendered.length > 0) {
+			setAllPhase("saving");
+			try {
+				await saveZip(rendered.map((r) => r.token), "lower-thirds.zip");
+				for (const r of rendered) {
+					const entry = entriesRef.current.find((e) => e.token === r.token);
+					if (entry) handleChange(entry.id, { status: "saved" });
+				}
+			} catch (err) {
+				setZipError(err instanceof Error ? err.message : String(err));
+			}
+		}
+		setAllPhase("idle");
 	};
 
 	return (
@@ -104,9 +134,7 @@ export const App: React.FC = () => {
 				<label htmlFor="roster">Enter details</label>
 				<textarea
 					id="roster"
-					placeholder={
-						"Matt Jensen, Associate Technical Producer\nAda Lovelace, Chief Analytical Engine Officer"
-					}
+					placeholder={"John Smith, Chief Executive Officer"}
 					value={rosterText}
 					onChange={(e) => setRosterText(e.target.value)}
 					rows={4}
@@ -118,44 +146,19 @@ export const App: React.FC = () => {
 
 			{entries.length > 0 ? (
 				<section className="roster-actions">
-					<div className="output-dir-field">
-						<label htmlFor="outputDir">Save to folder</label>
-						<div className="output-dir-controls">
-							<input
-								id="outputDir"
-								type="text"
-								value={outputDir}
-								onChange={(e) => setOutputDir(e.target.value)}
-								placeholder="out"
-							/>
-							<button
-								type="button"
-								disabled={isChoosingFolder}
-								onClick={handleChooseFolder}
-							>
-								{isChoosingFolder ? "Choosing…" : "Choose folder…"}
-							</button>
-						</div>
-					</div>
-					{folderPickerError ? (
-						<span className="output-dir-hint output-dir-error">
-							{folderPickerError} — you can still type a path directly.
-						</span>
-					) : (
-						<span className="output-dir-hint">
-							Click "Choose folder…" to pick with Finder, or type a path —
-							relative paths resolve inside the project, absolute paths (e.g.
-							/Users/you/Movies/LowerThirds) save anywhere else.
-						</span>
-					)}
 					<button
 						type="button"
 						className="primary"
-						disabled={isRenderingAll}
-						onClick={handleRenderAll}
+						disabled={allPhase !== "idle"}
+						onClick={handleRenderAndSaveAll}
 					>
-						{isRenderingAll ? "Rendering all…" : `Render all (${entries.length})`}
+						{allPhase === "rendering"
+							? "Rendering all…"
+							: allPhase === "saving"
+								? "Saving…"
+								: `Render & save all (${entries.length})…`}
 					</button>
+					{zipError ? <span className="output-dir-hint output-dir-error">{zipError}</span> : null}
 				</section>
 			) : null}
 
@@ -166,7 +169,7 @@ export const App: React.FC = () => {
 						entry={entry}
 						onChange={handleChange}
 						onRemove={handleRemove}
-						onRender={runRender}
+						onRender={runRenderAndSave}
 					/>
 				))}
 			</section>

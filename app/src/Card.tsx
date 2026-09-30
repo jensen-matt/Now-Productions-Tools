@@ -21,8 +21,20 @@ export const Card: React.FC<CardProps> = ({
 		name: entry.name,
 		title: entry.title,
 		title2: entry.hasTitle2 ? entry.title2 : "",
+		company: entry.company,
 		width: entry.hasCustomWidth ? entry.width : undefined,
 	};
+
+	const companyField = (
+		<label>
+			Company (optional)
+			<input
+				type="text"
+				value={entry.company}
+				onChange={(e) => onChange(entry.id, { company: e.target.value })}
+			/>
+		</label>
+	);
 
 	return (
 		<div className="card">
@@ -60,6 +72,8 @@ export const Card: React.FC<CardProps> = ({
 					/>
 				</label>
 
+				{!entry.hasTitle2 ? companyField : null}
+
 				<label className="checkbox-row">
 					<input
 						type="checkbox"
@@ -71,16 +85,19 @@ export const Card: React.FC<CardProps> = ({
 					Add second title line
 				</label>
 				{entry.hasTitle2 ? (
-					<label>
-						Second title line
-						<input
-							type="text"
-							value={entry.title2}
-							onChange={(e) =>
-								onChange(entry.id, { title2: e.target.value })
-							}
-						/>
-					</label>
+					<>
+						<label>
+							Second title line
+							<input
+								type="text"
+								value={entry.title2}
+								onChange={(e) =>
+									onChange(entry.id, { title2: e.target.value })
+								}
+							/>
+						</label>
+						{companyField}
+					</>
 				) : null}
 
 				<label className="checkbox-row">
@@ -115,6 +132,7 @@ export const Card: React.FC<CardProps> = ({
 					className="primary"
 					disabled={
 						entry.status === "rendering" ||
+						entry.status === "saving" ||
 						!entry.name.trim() ||
 						!entry.title.trim()
 					}
@@ -122,9 +140,11 @@ export const Card: React.FC<CardProps> = ({
 				>
 					{entry.status === "rendering"
 						? `Rendering… ${Math.round(entry.progress * 100)}%`
-						: entry.status === "done"
-							? "Re-render"
-							: "Render"}
+						: entry.status === "saving"
+							? "Saving…"
+							: entry.status === "done" || entry.status === "saved"
+								? "Re-render & save…"
+								: "Render & save…"}
 				</button>
 				<button
 					type="button"
@@ -145,8 +165,9 @@ export const Card: React.FC<CardProps> = ({
 			) : null}
 
 			{entry.status === "done" ? (
-				<div className="status status-done">Saved to {entry.outputPath}</div>
+				<div className="status status-done">Rendered — saving as part of the batch…</div>
 			) : null}
+			{entry.status === "saved" ? <div className="status status-done">Saved.</div> : null}
 			{entry.status === "error" ? (
 				<div className="status status-error">{entry.errorMessage}</div>
 			) : null}

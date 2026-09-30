@@ -30,6 +30,7 @@ export function parseRoster(text: string): Entry[] {
 				title,
 				hasTitle2: false,
 				title2: "",
+				company: "",
 				hasCustomWidth: false,
 				width: DEFAULT_WIDTH,
 				status: "idle",

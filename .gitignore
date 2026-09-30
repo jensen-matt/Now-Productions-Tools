@@ -1,12 +1,7 @@
-<<<<<<< HEAD
-node_modules
+# Project-specific
 .tools
-out
 .remotion
-app/dist
-*.log
-.env
-=======
+
 # Logs
 logs
 *.log
@@ -150,4 +145,3 @@ dist
 vite.config.js.timestamp-*
 vite.config.ts.timestamp-*
 .vite/
->>>>>>> origin/main

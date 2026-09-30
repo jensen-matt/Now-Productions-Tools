@@ -1,8 +1,10 @@
-import { execFile } from "node:child_process";
+import { ZipArchive } from "archiver";
+import crypto from "node:crypto";
 import express from "express";
 import fs from "node:fs";
 import mammoth from "mammoth";
 import multer from "multer";
+import os from "node:os";
 import path from "node:path";
 // Importing the package's own index.js (rather than this inner module)
 // runs a debug self-test on load under ESM — it has no CJS `module.parent`,
@@ -11,11 +13,9 @@ import path from "node:path";
 // on startup.
 import pdfParse from "pdf-parse/lib/pdf-parse.js";
 import { fileURLToPath } from "node:url";
-import { promisify } from "node:util";
-import { projectRoot, renderComposition } from "../scripts/renderComposition.mjs";
+import { renderComposition } from "../scripts/renderComposition.mjs";
 import { slugify } from "../scripts/slugify.mjs";
 
-const execFileAsync = promisify(execFile);
 const upload = multer({ storage: multer.memoryStorage() });
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -23,6 +23,7 @@ const distDir = path.join(__dirname, "dist");
 const graphicsDistDir = path.join(__dirname, "..", "graphics-app", "dist");
 const teleprompterDistDir = path.join(__dirname, "..", "teleprompter-app", "dist");
 const landingPath = path.join(__dirname, "landing.html");
+const toolsConfigPath = path.join(__dirname, "tools.json");
 const publicDir = path.join(__dirname, "..", "public");
 const PORT = process.env.PORT || 4000;
 
@@ -32,9 +33,37 @@ const GRAPHIC_COMPOSITION_IDS = {
 	quote: "QuoteCard",
 };
 
+// Renders land in the OS temp dir, not the project — the browser is the
+// only place a render is meant to end up (via the client's own save-file
+// picker), so there's nothing here for the project's out/ folder to
+// accumulate.
+const RENDER_TMP_DIR = path.join(os.tmpdir(), "nowprod-tools-renders");
+fs.mkdirSync(RENDER_TMP_DIR, { recursive: true });
+
+// token -> { filePath, filename, createdAt }. A render's result lives here
+// just long enough for the browser to fetch it once; downloading it (or
+// the sweep below, for anything abandoned) deletes both the entry and the
+// underlying file.
+const pendingDownloads = new Map();
+const DOWNLOAD_TTL_MS = 30 * 60 * 1000;
+
+function forgetDownload(token) {
+	const entry = pendingDownloads.get(token);
+	if (!entry) return;
+	pendingDownloads.delete(token);
+	fs.unlink(entry.filePath, () => {});
+}
+
+setInterval(() => {
+	const cutoff = Date.now() - DOWNLOAD_TTL_MS;
+	for (const [token, entry] of pendingDownloads) {
+		if (entry.createdAt < cutoff) forgetDownload(token);
+	}
+}, 5 * 60 * 1000);
+
 // Picks a sensible default filename per graphic kind when its primary
 // field is blank — slugify() falls back to "untitled" on its own, but a
-// kind-specific fallback makes the output folder easier to scan.
+// kind-specific fallback makes downloads easier to tell apart.
 function labelForGraphic(kind, fields) {
 	if (kind === "title") return fields.title || "title-card";
 	if (kind === "outro") return fields.heading || "outro-card";
@@ -42,15 +71,6 @@ function labelForGraphic(kind, fields) {
 		return fields.name || fields.quote?.trim().split(/\s+/).slice(0, 4).join(" ") || "quote-card";
 	}
 	return "graphic";
-}
-
-// Relative paths resolve inside the project; absolute paths (e.g. pasted
-// from Finder) are used as-is, so people can save straight into a
-// Premiere/Resolve project's media folder elsewhere on disk.
-function resolveOutputDir(outputDir) {
-	const trimmed = typeof outputDir === "string" ? outputDir.trim() : "";
-	const dir = trimmed || "out";
-	return path.isAbsolute(dir) ? dir : path.join(projectRoot, dir);
 }
 
 function uniqueOutputPath(dir, name) {
@@ -67,8 +87,20 @@ function uniqueOutputPath(dir, name) {
 const app = express();
 app.use(express.json());
 
+// Registers a finished render for one-time pickup by the browser and
+// returns the token/filename the client needs to fetch and save it.
+function registerDownload(outputLocation) {
+	const token = crypto.randomUUID();
+	pendingDownloads.set(token, {
+		filePath: outputLocation,
+		filename: path.basename(outputLocation),
+		createdAt: Date.now(),
+	});
+	return { token, filename: path.basename(outputLocation) };
+}
+
 app.post("/api/render", async (req, res) => {
-	const { name, title, title2, width, outputDir } = req.body ?? {};
+	const { name, title, title2, company, width } = req.body ?? {};
 
 	if (typeof name !== "string" || !name.trim()) {
 		res.status(400).json({ error: "name is required" });
@@ -79,18 +111,7 @@ app.post("/api/render", async (req, res) => {
 		return;
 	}
 
-	const resolvedDir = resolveOutputDir(outputDir);
-
-	try {
-		fs.mkdirSync(resolvedDir, { recursive: true });
-	} catch (err) {
-		res.status(400).json({
-			error: `Can't write to "${resolvedDir}": ${err instanceof Error ? err.message : String(err)}`,
-		});
-		return;
-	}
-
-	const outputLocation = uniqueOutputPath(resolvedDir, name);
+	const outputLocation = uniqueOutputPath(RENDER_TMP_DIR, name);
 
 	res.writeHead(200, {
 		"Content-Type": "application/x-ndjson",
@@ -104,6 +125,7 @@ app.post("/api/render", async (req, res) => {
 				name,
 				title,
 				title2: typeof title2 === "string" ? title2 : "",
+				company: typeof company === "string" ? company : "",
 				width: typeof width === "number" && Number.isFinite(width) ? width : undefined,
 			},
 			outputLocation,
@@ -111,12 +133,7 @@ app.post("/api/render", async (req, res) => {
 				res.write(JSON.stringify({ type: "progress", progress }) + "\n");
 			},
 		});
-		res.write(
-			JSON.stringify({
-				type: "done",
-				outputPath: outputLocation,
-			}) + "\n",
-		);
+		res.write(JSON.stringify({ type: "done", ...registerDownload(outputLocation) }) + "\n");
 	} catch (err) {
 		res.write(
 			JSON.stringify({
@@ -130,7 +147,7 @@ app.post("/api/render", async (req, res) => {
 });
 
 app.post("/api/render-graphic", async (req, res) => {
-	const { kind, fields, outputDir } = req.body ?? {};
+	const { kind, fields } = req.body ?? {};
 
 	const compositionId = GRAPHIC_COMPOSITION_IDS[kind];
 	if (!compositionId) {
@@ -155,18 +172,7 @@ app.post("/api/render-graphic", async (req, res) => {
 		return;
 	}
 
-	const resolvedDir = resolveOutputDir(outputDir);
-
-	try {
-		fs.mkdirSync(resolvedDir, { recursive: true });
-	} catch (err) {
-		res.status(400).json({
-			error: `Can't write to "${resolvedDir}": ${err instanceof Error ? err.message : String(err)}`,
-		});
-		return;
-	}
-
-	const outputLocation = uniqueOutputPath(resolvedDir, labelForGraphic(kind, fields));
+	const outputLocation = uniqueOutputPath(RENDER_TMP_DIR, labelForGraphic(kind, fields));
 
 	res.writeHead(200, {
 		"Content-Type": "application/x-ndjson",
@@ -182,12 +188,7 @@ app.post("/api/render-graphic", async (req, res) => {
 				res.write(JSON.stringify({ type: "progress", progress }) + "\n");
 			},
 		});
-		res.write(
-			JSON.stringify({
-				type: "done",
-				outputPath: outputLocation,
-			}) + "\n",
-		);
+		res.write(JSON.stringify({ type: "done", ...registerDownload(outputLocation) }) + "\n");
 	} catch (err) {
 		res.write(
 			JSON.stringify({
@@ -228,33 +229,73 @@ app.post("/api/parse-file", upload.single("file"), async (req, res) => {
 	}
 });
 
-app.post("/api/choose-folder", async (_req, res) => {
-	if (process.platform !== "darwin") {
-		res.status(501).json({
-			error: "Native folder picker is only available on macOS. Type the path instead.",
-		});
+// Renders live in the OS temp dir behind an opaque one-time token — the
+// client never sees or picks a filesystem path, so there's no arbitrary
+// path to validate here. Fetched once, then deleted; the sweep above
+// catches anything the client never comes back for.
+app.get("/api/download/:token", (req, res) => {
+	const entry = pendingDownloads.get(req.params.token);
+	if (!entry || !fs.existsSync(entry.filePath)) {
+		res.status(404).json({ error: "This render has expired or was already downloaded. Render it again." });
+		return;
+	}
+	res.download(entry.filePath, entry.filename, () => forgetDownload(req.params.token));
+});
+
+// Renders one zip containing every token passed in, for "Render all" to
+// hand back as a single download instead of one file per card.
+app.post("/api/download-zip", (req, res) => {
+	const { tokens } = req.body ?? {};
+	if (!Array.isArray(tokens) || tokens.length === 0) {
+		res.status(400).json({ error: "tokens is required" });
 		return;
 	}
 
-	try {
-		const { stdout } = await execFileAsync("osascript", [
-			"-e",
-			'POSIX path of (choose folder with prompt "Choose a folder to save renders")',
-		]);
-		res.json({ path: stdout.trim() });
-	} catch (err) {
-		const message = err instanceof Error ? err.message : String(err);
-		if (message.includes("-128")) {
-			// User clicked Cancel in the dialog — not an error.
-			res.json({ cancelled: true });
-		} else {
-			res.status(500).json({ error: message });
+	const entries = [];
+	for (const token of tokens) {
+		const entry = pendingDownloads.get(token);
+		if (!entry || !fs.existsSync(entry.filePath)) {
+			res.status(404).json({ error: "One of these renders has expired or was already downloaded. Render again." });
+			return;
 		}
+		entries.push({ token, ...entry });
 	}
+
+	res.setHeader("Content-Type", "application/zip");
+	res.setHeader("Content-Disposition", 'attachment; filename="renders.zip"');
+
+	const archive = new ZipArchive();
+	archive.on("error", (err) => res.destroy(err));
+	archive.pipe(res);
+
+	const usedNames = new Set();
+	for (const entry of entries) {
+		let name = entry.filename;
+		let n = 2;
+		while (usedNames.has(name)) {
+			name = `${path.basename(entry.filename, ".mov")}-${n}.mov`;
+			n += 1;
+		}
+		usedNames.add(name);
+		archive.file(entry.filePath, { name });
+	}
+
+	res.on("finish", () => {
+		for (const entry of entries) forgetDownload(entry.token);
+	});
+
+	archive.finalize();
 });
 
 app.get("/", (_req, res) => {
 	res.sendFile(landingPath);
+});
+
+// The landing page's own script fetches this to decide which tiles to
+// render — editing this file (no rebuild/restart needed) is how a tool
+// gets shown or hidden on the hub.
+app.get("/tools.json", (_req, res) => {
+	res.sendFile(toolsConfigPath);
 });
 
 // Remotion's staticFile() always resolves root-relative (e.g.

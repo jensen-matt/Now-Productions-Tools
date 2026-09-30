@@ -1,0 +1,26 @@
+[
+  {
+    "id": "lower-third",
+    "name": "Lower Third Generator",
+    "icon": "LT",
+    "href": "/lower-third",
+    "desc": "Batch-render ServiceNow-brand name/title lower thirds as transparent ProRes videos.",
+    "visible": true
+  },
+  {
+    "id": "graphics",
+    "name": "Graphics Generator",
+    "icon": "GX",
+    "href": "/graphics",
+    "desc": "Batch-render title cards, outro cards, and quote cards in the same ServiceNow brand style.",
+    "visible": false
+  },
+  {
+    "id": "teleprompter",
+    "name": "Teleprompter Formatter",
+    "icon": "TP",
+    "href": "/teleprompter",
+    "desc": "Upload or paste a talk track and read it back as a full-screen, scrollable teleprompter with a clean, readable format.",
+    "visible": true
+  }
+]

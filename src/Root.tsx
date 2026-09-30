@@ -27,6 +27,7 @@ export const RemotionRoot: React.FC = () => {
 					name: "Matt Jensen",
 					title: "Associate Technical Producer",
 					title2: "",
+					company: "",
 					width: undefined,
 				}}
 			/>

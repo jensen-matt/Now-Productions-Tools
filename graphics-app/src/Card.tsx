@@ -116,14 +116,16 @@ export const Card: React.FC<CardProps> = ({ entry, onChange, onRemove, onRender 
 				<button
 					type="button"
 					className="primary"
-					disabled={entry.status === "rendering" || !isRenderable(entry)}
+					disabled={entry.status === "rendering" || entry.status === "saving" || !isRenderable(entry)}
 					onClick={() => onRender(entry.id)}
 				>
 					{entry.status === "rendering"
 						? `Rendering… ${Math.round(entry.progress * 100)}%`
-						: entry.status === "done"
-							? "Re-render"
-							: "Render"}
+						: entry.status === "saving"
+							? "Saving…"
+							: entry.status === "done" || entry.status === "saved"
+								? "Re-render & save…"
+								: "Render & save…"}
 				</button>
 				<button type="button" className="ghost" onClick={() => onRemove(entry.id)}>
 					Remove
@@ -137,8 +139,9 @@ export const Card: React.FC<CardProps> = ({ entry, onChange, onRemove, onRender 
 			) : null}
 
 			{entry.status === "done" ? (
-				<div className="status status-done">Saved to {entry.outputPath}</div>
+				<div className="status status-done">Rendered — saving as part of the batch…</div>
 			) : null}
+			{entry.status === "saved" ? <div className="status status-done">Saved.</div> : null}
 			{entry.status === "error" ? (
 				<div className="status status-error">{entry.errorMessage}</div>
 			) : null}

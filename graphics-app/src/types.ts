@@ -1,4 +1,4 @@
-export type RenderStatus = "idle" | "rendering" | "done" | "error";
+export type RenderStatus = "idle" | "rendering" | "done" | "saving" | "saved" | "error";
 
 export type GraphicKind = "title" | "outro" | "quote";
 
@@ -10,7 +10,8 @@ type BaseEntry = {
 	id: string;
 	status: RenderStatus;
 	progress: number;
-	outputPath?: string;
+	token?: string;
+	filename?: string;
 	errorMessage?: string;
 };
 

@@ -49,6 +49,15 @@ export async function renderComposition({
 		outputLocation,
 		inputProps,
 		muted: true,
+		// Remotion's default concurrency spreads frames across several
+		// parallel browser tabs (tied to CPU core count). Different tabs can
+		// rasterize the same web-font text with tiny inconsistencies, so
+		// frames that should be pixel-identical (e.g. a graphic's long
+		// static hold) aren't — invisible frame-by-frame, but a visible
+		// shimmer once played back as continuous video. Forcing a single
+		// tab trades render speed for guaranteed frame-to-frame determinism,
+		// which matters more for a short broadcast graphic than render time.
+		concurrency: 1,
 		onProgress: onProgress
 			? ({ progress }) => onProgress(progress)
 			: undefined,

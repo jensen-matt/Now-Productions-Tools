@@ -107,15 +107,14 @@ const FADE_START_T = 0.65;
 // second) read as a late, delayed fade-in; 0.75 starts the text while the
 // frame is still mid-squeeze instead of waiting for it to finish.
 const TEXT_FRACTION = 0.75;
-// Within that window, the slide finishes after only this fraction of it —
-// well before the fade does. Without this gap, slide and fade finish at
-// the exact same instant, which means the last few percent of the slide
-// play out while the text is already ~85-98% opaque: a fully-visible object
-// still visibly creeping the last couple of px, which reads as a little
-// snap/settle even though the underlying values move continuously. Ending
-// the slide early means it's already at rest for the back portion of the
-// window, while only opacity is still (smoothly) climbing.
-const TEXT_SLIDE_FRACTION = 0.7;
+// Small per-line stagger, in the same t-fraction units as TEXT_FRACTION, so
+// the name settles first, then the title line(s), then the company — each
+// group's fade window starts this much later in t than the one before it
+// (see textOpacityAt() below). Kept small on purpose: the ask is a subtle
+// cascade, not a sequential reveal, and a bigger step would push company's
+// window (2 steps in) past the frame's own squeeze/slide finishing, which
+// would read as a delayed, disconnected pop instead of a cascade.
+const STAGGER_STEP_T = 0.05;
 // Optical left-margin correction for the name line only, in final rendered
 // px (not multiplied by SCALE — tuned by eye against the actual output,
 // not a design-spec geometry value). The name and title/company blocks
@@ -136,17 +135,30 @@ const MIN_SQUEEZE_SCALE = 0.04;
 const FRAME_SLIDE = 64 * SCALE;
 const TEXT_SLIDE = 14 * SCALE;
 
-// Plate geometry, in px — matches the design spec's padding (20px 32px
-// 22px) and type sizes exactly, times SCALE. Height is fixed per mode (one
-// line vs. two lines of title) rather than shrinking/growing with content,
-// so the two variants each render at a constant, predictable height.
+// Plate geometry, in px, times SCALE. Height is fixed per mode (one line
+// vs. two lines of title) rather than shrinking/growing with content, so
+// the two variants each render at a constant, predictable height.
 const NAME_SIZE = 40 * SCALE;
 const NAME_LINE_HEIGHT = 1.1;
 const TITLE_SIZE = 18 * SCALE;
 const TITLE_LINE_HEIGHT = 1.15;
 const LINE_GAP = 2 * SCALE;
-const PLATE_PAD_TOP = 20 * SCALE;
-const PLATE_PAD_BOTTOM = 22 * SCALE;
+// PLATE_PAD_TOP/BOTTOM are applied as real CSS padding (below) rather than
+// centering the text block in the plate — centering would silently discard
+// any top/bottom asymmetry here. Both are trimmed down from the design
+// spec's 20/22 to make the plate noticeably shorter overall. PLATE_PAD_TOP
+// still sits a little above PLATE_PAD_BOTTOM: the plate's entrance
+// clip-path (see clipPath below) reveals bottom-up, so the name line (at
+// the top) is the one at risk of the still-growing clip edge slicing
+// across it while it fades in — a taller top gap buys it a bit of cover
+// without needing the much larger, height-defeating gap a full fix would
+// take (the clip and fade windows are both nonlinear and don't resolve to
+// a clean formula; tuned against rendered frames, not derived
+// analytically). It's a partial mitigation, not a full fix — a faint,
+// brief clip can still show at the very start of the name's fade-in —
+// traded deliberately for keeping the plate short.
+const PLATE_PAD_TOP = 18 * SCALE;
+const PLATE_PAD_BOTTOM = 9 * SCALE;
 const PLATE_PAD_X = 32 * SCALE;
 const PLATE_RADIUS = 14 * SCALE;
 
@@ -188,46 +200,88 @@ function transitionState(t: number) {
 	// TRANSITION_DURATION). Bottoms out at MIN_SQUEEZE_SCALE/FRAME_SLIDE
 	// rather than 0/further, since a fully-shrunk, fully-displaced frame
 	// would leave nothing for the fade below to visibly act on.
-	let frameProgress = bezierExit(t, 0, 1);
-	// Chrome renders a transformed element's text differently depending on
-	// whether the transform is the exact identity (scaleY(1) translateY(0))
-	// or merely a value that rounds to it on screen — the identity case
-	// skips the compositing/resampling path a non-identity value forces,
-	// which resamples the text underneath it. TRANSITION_EASE only reaches
-	// exactly 0 on the very last rendered frame, so every frame before it
-	// carries a microscopic (sub-0.01px) non-zero residual — invisible on
-	// its own, but the switch to true identity on that last frame reads as
-	// a small pop, because it's a rendering-path change, not a continuation
-	// of the animation's own easing. Snapping to exactly 0 a few frames
-	// early — while the residual is already far below a pixel — means
-	// several consecutive tail frames share the exact same transform, so
-	// that rendering-path switch lands where nothing else is visibly
-	// changing either, instead of on the frame everyone's eye is on.
-	if (frameProgress < 0.002) frameProgress = 0;
+	// No early "snap to exact identity" here (there used to be one): that
+	// trick was only needed to dodge a Chrome render-path switch between a
+	// transformed element's identity and near-identity states, and
+	// willChange: "transform" on the elements this feeds (the outer frame
+	// group, the bar) already forces the same composited render path
+	// permanently, regardless of value — making that switch a non-issue.
+	// (Tested removing it in isolation: made no measurable difference to
+	// the text bounce below, confirming the snap was never that bounce's
+	// cause — it's dead weight now, not a fix for anything live, so it's
+	// gone rather than left in place "just in case.")
+	const frameProgress = bezierExit(t, 0, 1);
 	const barScale = 1 - frameProgress * (1 - MIN_SQUEEZE_SCALE);
 	const plateScaleY = 1 - frameProgress * (1 - MIN_SQUEEZE_SCALE);
+	// Not rounded (tried that — see the note on the plate's height below,
+	// which is the one place rounding actually mattered): this value is
+	// smooth and genuinely monotonic on its own, confirmed to 10 decimal
+	// places. Rounding it to whole pixels was the real source of a
+	// different symptom — a multi-frame "stall" at the same pixel value
+	// before a final 1px pop, since this curve's tail (by design, for a
+	// smooth deceleration) spends many frames within one pixel of its
+	// target. Sub-pixel motion here renders smoothly throughout; only the
+	// plate's own animated height needed whole-pixel snapping.
 	const frameY = frameProgress * FRAME_SLIDE;
 
 	// Text: fades over its whole window, done well before the frame
-	// finishes its own squeeze+slide (see TEXT_FRACTION above).
-	const textFadeProgress = bezierExit(t, 0, TEXT_FRACTION, TEXT_EASE);
-	const textOpacity = 1 - textFadeProgress;
-	// The slide uses the tail end of that same window (see
-	// TEXT_SLIDE_FRACTION above) so it comes to rest before the fade does.
-	const textSlideProgress = bezierExit(
-		t,
-		TEXT_FRACTION * (1 - TEXT_SLIDE_FRACTION),
-		TEXT_FRACTION * TEXT_SLIDE_FRACTION,
-		TEXT_EASE,
-	);
-	const textY = textSlideProgress * TEXT_SLIDE;
+	// finishes its own squeeze+slide (see TEXT_FRACTION above). Each group's
+	// fade window is [start, start + TEXT_FRACTION] in t, and t counts DOWN
+	// during the entrance (1 -> 0) — so a window with a *larger* start is
+	// reached sooner in wall-clock time, not later. To get name-then-title-
+	// then-company on entrance, name needs the largest start (reached
+	// first as t drops), company the smallest (reached last). That same
+	// assignment, replayed forward on the exit (t: 0 -> 1), makes company
+	// fade out first and name linger longest — a "last in, first out"
+	// mirror of the entrance rather than an independently-tuned exit order.
+	function textOpacityAt(order: number): number {
+		const fadeProgress = bezierExit(
+			t,
+			order * STAGGER_STEP_T,
+			TEXT_FRACTION,
+			TEXT_EASE,
+		);
+		return 1 - fadeProgress;
+	}
+	const nameOpacity = textOpacityAt(2);
+	const titleOpacity = textOpacityAt(1);
+	const companyOpacity = textOpacityAt(0);
+	// The slide is tied directly to frameProgress — the same value driving
+	// the frame's own squeeze+slide — instead of its own independently-
+	// shaped curve on its own timing. textY and frameY therefore always
+	// share one deceleration profile; there's no way for them to diverge,
+	// and no separate window to mistime relative to the other. (A
+	// separately-tuned curve here either overlapped frameProgress's own
+	// tail — two independently-rounding transforms on separate elements
+	// whose combined pixel position briefly bounced — or was re-timed to
+	// finish earlier to dodge that overlap, which then visibly outran
+	// frameProgress's own motion as a jarring speed mismatch. Sharing the
+	// value removes both failure modes at the root instead of trading one
+	// for the other.) textY settles exactly when frameY does — comfortably
+	// before the fade finishes, matching this file's long-standing intent
+	// that the slide come to rest while opacity is still climbing.
+	// Also not rounded, for the same reason as frameY above: tried
+	// rounding this (along with three different mechanisms for computing
+	// it) chasing what turned out to be the plate's animated height, not
+	// this value — rounding it only traded a 1px flicker for a multi-frame
+	// stall-then-pop. Smooth sub-pixel motion is the right behavior here.
+	const textY = frameProgress * TEXT_SLIDE;
 
 	// Once the frame is FADE_START_T of the way through the transition,
 	// it starts fading too, continuing through to the end.
 	const fadeProgress = bezierExit(t, FADE_START_T, 1 - FADE_START_T);
 	const frameOpacity = 1 - fadeProgress;
 
-	return { barScale, plateScaleY, frameOpacity, frameY, textOpacity, textY };
+	return {
+		barScale,
+		plateScaleY,
+		frameOpacity,
+		frameY,
+		nameOpacity,
+		titleOpacity,
+		companyOpacity,
+		textY,
+	};
 }
 
 export const LowerThird: React.FC<LowerThirdProps> = ({
@@ -265,14 +319,16 @@ export const LowerThird: React.FC<LowerThirdProps> = ({
 		t = 0;
 	}
 
-	const { barScale, plateScaleY, frameOpacity, frameY, textOpacity, textY } = transitionState(t);
-	// The name/title text sits inside the plate div, which is being
-	// scaleY'd for the squeeze — without correction, that scale cascades
-	// to the text too, visibly squashing/stretching the glyphs as the
-	// plate resizes. This counter-scale cancels it out so the text always
-	// renders at its true proportions, on a separate inner wrapper so it
-	// doesn't also cancel out the text's own translateY slide.
-	const textCounterScaleY = 1 / plateScaleY;
+	const {
+		barScale,
+		plateScaleY,
+		frameOpacity,
+		frameY,
+		nameOpacity,
+		titleOpacity,
+		companyOpacity,
+		textY,
+	} = transitionState(t);
 
 	const titleLineStyle: React.CSSProperties = {
 		fontFamily: TITLE_FONT_FAMILY,
@@ -297,6 +353,16 @@ export const LowerThird: React.FC<LowerThirdProps> = ({
 					alignItems: "flex-start",
 					transform: `translateY(${frameY}px)`,
 					opacity: frameOpacity,
+					// Same category of bug as the text wrappers' willChange
+					// (see below): frameProgress's <0.002 snap only relocates
+					// the identity-vs-near-identity rendering-path switch to a
+					// spot where nothing else is visibly moving on a flat
+					// frame-by-frame comparison. On a real downstream decoder
+					// (seen via Mitti driving a program feed), that switch
+					// still reads as a visible pop. Pinning this group's own
+					// layer for its entire lifetime removes the switch
+					// outright instead of just relocating it.
+					willChange: "transform",
 				}}
 			>
 				<div
@@ -308,18 +374,46 @@ export const LowerThird: React.FC<LowerThirdProps> = ({
 						marginBottom: BAR_MARGIN_BOTTOM,
 						transform: `scaleX(${barScale})`,
 						transformOrigin: "left center",
+						willChange: "transform",
 					}}
 				/>
 				<div
 					style={{
 						position: "relative",
 						width: width ? `${width}px` : undefined,
+						// Fixed at the full, unsqueezed height — never animated —
+						// so everything inside (background, text) has an entirely
+						// constant layout on every single frame, with no flex/
+						// overflow computation involved at all. The squeeze is
+						// done as a clip-path inset from the top (below), not by
+						// animating this box's own size: animating real layout
+						// height here (an earlier approach) still left the
+						// content's rendered position dependent on this box's
+						// exact fractional height, confirmed by a direct
+						// diagnostic (pinning the squeeze to a constant made the
+						// dependency disappear) — even though a flex/justify-
+						// content: flex-end "anchor" should have made the content
+						// independent of it. clip-path has no such layout
+						// involvement: it's a pure paint-time clip against a box
+						// whose size and position never change, so there's
+						// nothing left for the squeeze's value to leak into.
 						height: plateHeight,
 						boxSizing: "border-box",
 						borderRadius: PLATE_RADIUS,
 						overflow: "hidden",
-						transform: `scaleY(${plateScaleY})`,
-						transformOrigin: "center bottom",
+						// Reveals from the bottom up as plateScaleY goes from
+						// MIN_SQUEEZE_SCALE to 1 — clipping away the top portion
+						// of this fixed box, the same visual effect the old
+						// transformOrigin: "center bottom" scaleY gave, but as a
+						// paint-level clip instead of a layout-affecting size.
+						// "round" matches the box's own PLATE_RADIUS onto the clip
+						// rect's corners — without it, clip-path's rect is a plain
+						// (unrounded) rectangle, so once the top inset clips past
+						// the box's actual rounded top corners, the newly-exposed
+						// top edge is a hard square cut instead of matching the
+						// rounded look the bottom edge already has from the box's
+						// own border-radius + overflow: hidden.
+						clipPath: `inset(${plateHeight * (1 - plateScaleY)}px 0 0 0 round ${PLATE_RADIUS}px)`,
 					}}
 				>
 					<Img
@@ -350,69 +444,104 @@ export const LowerThird: React.FC<LowerThirdProps> = ({
 							boxSizing: "border-box",
 							paddingLeft: PLATE_PAD_X,
 							paddingRight: PLATE_PAD_X,
+							paddingTop: PLATE_PAD_TOP,
+							paddingBottom: PLATE_PAD_BOTTOM,
 							display: "flex",
 							flexDirection: "column",
-							justifyContent: "center",
-							gap: LINE_GAP,
 						}}
 					>
 						<div
 							style={{
-								opacity: textOpacity,
-								transform: `translateX(${NAME_LEFT_NUDGE}px) translateY(${textY}px)`,
-								// Keeps this on the same GPU-composited layer at every
-								// opacity value, including 1 — without it, Chrome only
-								// promotes the layer while opacity < 1 (forcing grayscale
-								// AA instead of the direct-paint subpixel AA it uses once
-								// opacity settles at exactly 1), so the glyphs get
-								// re-rasterized slightly differently the instant the fade
-								// finishes, reading as the text's right edge hopping by a
-								// px or two right as the entrance settles. Pinning the
-								// layer for the text's entire lifetime — not just while
-								// animating — makes every frame use the same rendering
-								// path, fade or fully visible alike.
-								willChange: "opacity",
+								// The slide offset lives here, on a single shared wrapper
+								// around all three text groups, rather than repeated on
+								// each one — it used to be repeated (one per group) back
+								// when there were only two groups (name, title+company),
+								// and splitting that second group into title and company
+								// for the stagger (see textOpacityAt() above) turned "one
+								// repeated offset" into three independently-positioned
+								// layout boxes. All three still got the exact same textY
+								// value, but each is its own box, and each one's layout
+								// position rounds to a whole pixel independently at paint
+								// time — so despite sharing one continuous, monotonic
+								// value, the title and company boxes could round to
+								// different pixels from each other on different frames,
+								// visible as the gap between them jittering by a px.
+								// Hoisting the offset to one common ancestor means there's
+								// only one box being positioned and rounded; the three
+								// groups inside it are plain flow children with no
+								// position/top of their own, so they move together with
+								// no possibility of diverging.
+								position: "relative",
+								top: textY,
+								display: "flex",
+								flexDirection: "column",
+								gap: LINE_GAP,
 							}}
 						>
 							<div
 								style={{
-									fontFamily: NAME_FONT_FAMILY,
-									fontWeight: 700,
-									fontSize: NAME_SIZE,
-									color: "#63DF4E",
-									letterSpacing: "-0.01em",
-									lineHeight: NAME_LINE_HEIGHT,
-									whiteSpace: "nowrap",
-									transform: `scaleY(${textCounterScaleY})`,
+									opacity: nameOpacity,
+									// Keeps this on the same GPU-composited layer at every
+									// opacity value, including 1 — without it, Chrome only
+									// promotes the layer while opacity < 1 (forcing grayscale
+									// AA instead of the direct-paint subpixel AA it uses once
+									// opacity settles at exactly 1), so the glyphs get
+									// re-rasterized slightly differently the instant the fade
+									// finishes, reading as the text's right edge hopping by a
+									// px or two right as the entrance settles. Pinning the
+									// layer for the text's entire lifetime — not just while
+									// animating — makes every frame use the same rendering
+									// path, fade or fully visible alike.
+									willChange: "opacity",
+									position: "relative",
+									left: NAME_LEFT_NUDGE,
 								}}
 							>
-								{name}
+								<div
+									style={{
+										fontFamily: NAME_FONT_FAMILY,
+										fontWeight: 700,
+										fontSize: NAME_SIZE,
+										color: "#63DF4E",
+										letterSpacing: "-0.01em",
+										lineHeight: NAME_LINE_HEIGHT,
+										whiteSpace: "nowrap",
+									}}
+								>
+									{name}
+								</div>
 							</div>
-						</div>
-						<div
-							style={{
-								opacity: textOpacity,
-								transform: `translateY(${textY}px)`,
-								// See the matching comment on the name block above.
-								willChange: "opacity",
-							}}
-						>
 							<div
 								style={{
-									display: "flex",
-									flexDirection: "column",
-									gap: LINE_GAP,
-									transform: `scaleY(${textCounterScaleY})`,
+									opacity: titleOpacity,
+									// See the matching comment on the name block above.
+									willChange: "opacity",
 								}}
 							>
-								<div style={titleLineStyle}>{title}</div>
-								{hasSecondLine ? (
-									<div style={titleLineStyle}>{title2}</div>
-								) : null}
-								{hasCompany ? (
+								<div
+									style={{
+										display: "flex",
+										flexDirection: "column",
+										gap: LINE_GAP,
+									}}
+								>
+									<div style={titleLineStyle}>{title}</div>
+									{hasSecondLine ? (
+										<div style={titleLineStyle}>{title2}</div>
+									) : null}
+								</div>
+							</div>
+							{hasCompany ? (
+								<div
+									style={{
+										opacity: companyOpacity,
+										// See the matching comment on the name block above.
+										willChange: "opacity",
+									}}
+								>
 									<div style={companyLineStyle}>{company}</div>
-								) : null}
-							</div>
+								</div>
+							) : null}
 						</div>
 					</div>
 				</div>
